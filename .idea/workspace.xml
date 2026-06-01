@@ -4,14 +4,22 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="e2bfa381-ad68-497a-a60e-e576202e4ae5" name="Changes" comment="">
-      <change afterPath="$PROJECT_DIR$/Docker compose.yml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/Readme" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/Requirements" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/main.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/routers/units.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/saved.code" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/BN_API.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/BN_API.iml" afterDir="false" />
+    <list default="true" id="e2bfa381-ad68-497a-a60e-e576202e4ae5" name="Changes" comment="Initial work Commit (5/31/2026)&#10;Tuning for parser still needed">
+      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/core/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/core/cache.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/core/config.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/models/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/models/wiki_models.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/routers/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/routers/buildings.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/routers/search.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/services/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/services/parser.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/services/wiki_client.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/app/services/wiki_service.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_parser.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -82,9 +90,20 @@
       <option name="presentableId" value="Default" />
       <updated>1780266192859</updated>
     </task>
+    <task id="LOCAL-00001" summary="Initial work Commit (5/31/2026)&#10;Tuning for parser still needed">
+      <option name="closed" value="true" />
+      <created>1780283706979</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1780283706979</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
   </component>
   <component name="VcsManagerConfiguration">
     <option name="MARK_IGNORED_AS_EXCLUDED" value="true" />
+    <MESSAGE value="Initial work Commit (5/31/2026)&#10;Tuning for parser still needed" />
+    <option name="LAST_COMMIT_MESSAGE" value="Initial work Commit (5/31/2026)&#10;Tuning for parser still needed" />
   </component>
 </project>
