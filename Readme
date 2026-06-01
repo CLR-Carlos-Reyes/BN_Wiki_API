@@ -1,0 +1,131 @@
+# Battle Nations Wiki API
+
+A FastAPI service that pulls unit and building data from the
+[Battle Nations Wiki](https://battlenations.miraheze.org) via the MediaWiki API,
+parses infobox templates, and caches results in Redis.
+
+## Architecture
+
+```
+Client request
+      │
+      ▼
+┌─────────────┐
+│  FastAPI    │  /units/{title}  /buildings/{title}  /search?q=
+└──────┬──────┘
+       │
+       ▼
+┌─────────────────┐
+│  wiki_service   │  orchestrates cache → fetch → parse → store
+└──┬──────────┬───┘
+   │          │
+   ▼          ▼
+┌──────┐  ┌──────────────────┐
+│Redis │  │  wiki_client     │  httpx async → Miraheze MediaWiki API
+│Cache │  │  (wikitext)      │
+└──────┘  └────────┬─────────┘
+                   │
+                   ▼
+           ┌───────────────┐
+           │  parser.py    │  mwparserfromhell → normalised models
+           └───────────────┘
+```
+
+## Quick Start
+
+### With Docker Compose (recommended)
+
+```bash
+cp .env.example .env
+docker compose up
+```
+
+### Manually
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env
+# Start Redis separately, then:
+uvicorn app.main:app --reload
+```
+
+Docs available at http://localhost:8000/docs
+
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/units/{page_title}` | Per-rank stats for a unit |
+| GET | `/buildings/{page_title}` | Production/cost stats for a building |
+| GET | `/search?q=query` | Full-text wiki search |
+| GET | `/health` | Health check |
+
+## Example responses
+
+### `GET /units/Trooper`
+
+```json
+{
+  "name": "Trooper",
+  "page_title": "Trooper",
+  "unit_type": "Soldier",
+  "description": "The backbone of the 95th Rifle Company.",
+  "ranks": [
+    {
+      "rank": 1,
+      "hp": 100,
+      "armor": 0,
+      "offense": 50,
+      "defense": 50,
+      "attacks": [
+        { "name": "Rifle Shot", "power": 20, "damage_type": "Ballistic" }
+      ],
+      "extra": {}
+    },
+    { "rank": 2, "hp": 115, ... },
+    ...
+  ],
+  "cached": false
+}
+```
+
+### `GET /buildings/Iron_Mine`
+
+```json
+{
+  "name": "Iron Mine",
+  "page_title": "Iron_Mine",
+  "building_type": "Resource",
+  "gold_cost": 1500,
+  "xp_reward": 30,
+  "production": [
+    { "resource": "Iron", "amount": 15, "period_seconds": 3600 }
+  ],
+  "cached": false
+}
+```
+
+## Configuration (`.env`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WIKI_BASE_URL` | `https://battlenations.miraheze.org/w/api.php` | MediaWiki API endpoint |
+| `REDIS_URL` | `redis://localhost:6379` | Redis connection string |
+| `CACHE_TTL_SECONDS` | `3600` | How long to cache wiki pages (seconds) |
+| `LOG_LEVEL` | `INFO` | Python log level |
+
+## Parser notes
+
+Wiki pages use MediaWiki infobox templates. The parser (`services/parser.py`) looks for:
+
+- **Units**: parameters like `hp1`–`hp9`, `armor1`–`armor9`, `offense1`–`offense9`, `defense1`–`defense9`, and `attack{rank}name` / `attack{rank}power` / `attack{rank}type`.
+- **Buildings**: `production`, `amount`, `time` (accepts `1h`, `30m`, `3600` formats), `gold`, `xp`, and per-resource keys (`iron`, `coal`, `oil`, …).
+
+If a page uses different parameter names, add them to the alias lists in `parser.py`.
+
+## Running tests
+
+```bash
+pip install pytest
+pytest tests/ -v
+```

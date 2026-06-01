@@ -1,0 +1,55 @@
+@app.route('/units', methods=['POST'])
+def add_unit():
+    unit = Unit(name=request.json['name'], description=request.json['description'])
+    db.session.add(unit)
+    db.session.commit()
+    return {'id': unit.id}
+
+@app.route('/units/<id>', methods=['DELETE'])
+def delete_unit(id):
+    unit = Unit.query.get(id)
+    db.session.delete(unit)
+    db.session.commit()
+
+-----------------------------------------------------------
+from flask import Flask, request
+app = Flask(__name__)
+from flask_sqlalchemy import SQLAlchemy
+
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///data.db'
+db= SQLAlchemy(app)
+
+class Unit(db.model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(80), unique=True, nullable=False)
+    description = db.Column(db.string(120))
+
+
+    def __repr__(self):
+        return f"{self.name} - {self.description}"
+
+@app.route('/')
+def index():
+    return "Hello"
+
+@app.route('/units') #drinks
+def get_units():
+    units = Unit.query.all
+
+    output = []
+    for unit in units:
+        unit_data = {'name' : unit.name, 'description': unit.description}
+
+        output.append(unit_data)
+
+    return{"units": "output"}
+
+@app.route('/units/<id>')
+
+def get_unit(id):
+    unit = Unit.query.get_or_404(id)
+    return {"name": unit.name, "description": unit.description}
+
+
+
+
