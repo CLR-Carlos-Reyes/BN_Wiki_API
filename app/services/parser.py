@@ -1,14 +1,14 @@
 """
 Wikitext parser for Battle Nations wiki pages.
 
-The wiki uses MediaWiki templates (infoboxes) such as:
-  {{Unit|hp1=100|hp2=120|...|armor1=0|...|offense1=50|...}}
-  {{Building|gold=500|xp=25|production=Iron|amount=10|time=3600}}
+Unit pages use:
+  {{UnitProfile|unit type=Soldier|...}}   — basic info
+  {{UnitRanksBox|hp=55;60;65;70;75;85|defense=50;55;...}}  — semicolon-separated per-rank stats
+  {{AttackBox|name=Shoot|rank=1|damagetype=Piercing|mindmg=22|maxdmg=26|baseoffense=46}}
 
-Because exact template names / parameter names vary per page, this module
-uses heuristics to detect the most likely infobox and extract numbers.
-
-If the wiki template structure changes, update the field name lists below.
+Building pages use:
+  {{BuildingProfile|...}} or similar infobox
+  {{BuildCost|gold=250|iron=5|time=360}}
 """
 
 import logging
@@ -27,14 +27,12 @@ from app.models.wiki_models import (
 
 logger = logging.getLogger(__name__)
 
-MAX_RANKS = 9  # Battle Nations max rank (boss-strike units go to 9)
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def _int(value: str | None) -> int | None:
-    """Safely parse a wikitext field value to int."""
     if value is None:
         return None
     cleaned = re.sub(r"[^\d]", "", str(value).strip())
@@ -45,13 +43,12 @@ def _str(value: str | None) -> str | None:
     if value is None:
         return None
     s = str(value).strip()
-    # Strip wikilinks [[Foo|Bar]] → Bar
-    s = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]+)\]\]", r"\1", s)
+    s = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]+)\]\]", r"\1", s)  # strip [[links]]
+    s = re.sub(r"\{\{[^}]+\}\}", "", s).strip()               # strip {{templates}}
     return s or None
 
 
 def _template_params(template) -> dict[str, str]:
-    """Return {param_name: param_value} for a parsed template."""
     params: dict[str, str] = {}
     for param in template.params:
         key = str(param.name).strip()
@@ -60,175 +57,170 @@ def _template_params(template) -> dict[str, str]:
     return params
 
 
-def _find_infobox(wikicode, keywords: list[str]):
-    """
-    Return the first template whose name contains any of *keywords* (case-insensitive).
-    Falls back to the largest template on the page if nothing matches.
-    """
-    all_templates = wikicode.filter_templates()
-    for kw in keywords:
-        kw_lower = kw.lower()
-        for t in all_templates:
-            if kw_lower in str(t.name).lower():
-                return t
-
-    # Fallback: template with the most parameters
-    if all_templates:
-        return max(all_templates, key=lambda t: len(t.params))
+def _find_template(wikicode, *names: str):
+    """Find the first template whose name matches any of the given names (case-insensitive)."""
+    targets = [n.lower() for n in names]
+    for t in wikicode.filter_templates():
+        if str(t.name).strip().lower() in targets:
+            return t
     return None
+
+
+def _parse_semicolon_list(value: str | None) -> list:
+    """
+    Parse a semicolon-separated stat list like '55; 60; 65; 70; 75; 85'
+    into a list of ints, one per rank.
+    """
+    if not value:
+        return []
+    parts = [p.strip() for p in value.split(";")]
+    result = []
+    for p in parts:
+        cleaned = re.sub(r"[^\d]", "", p)
+        result.append(int(cleaned) if cleaned else None)
+    return result
 
 
 # ---------------------------------------------------------------------------
 # Unit parser
 # ---------------------------------------------------------------------------
 
-UNIT_KEYWORDS = ["unit", "soldier", "vehicle", "infobox"]
-
-
 def parse_unit(wikitext: str, page_title: str) -> UnitResponse:
     wikicode = mwparserfromhell.parse(wikitext)
-    infobox = _find_infobox(wikicode, UNIT_KEYWORDS)
 
-    if infobox is None:
-        logger.warning("No unit infobox found for %s", page_title)
-        return UnitResponse(name=page_title, page_title=page_title)
+    # --- Profile (basic info) ---
+    profile = _find_template(wikicode, "unitprofile")
+    profile_params = _template_params(profile) if profile else {}
 
-    params = _template_params(infobox)
-    logger.debug("Unit params for %s: %s", page_title, list(params.keys()))
+    unit_type = _str(profile_params.get("unit type") or profile_params.get("unit_type"))
 
-    # Friendly name (may differ from page title)
-    name = _str(params.get("name")) or page_title
-
-    # Unit type / classification
-    unit_type = _str(
-        params.get("type") or params.get("class") or params.get("unittype")
-    )
-
-    # Description / lore
-    description = _str(params.get("description") or params.get("desc"))
-
-    # Build per-rank stats
-    # Common patterns: hp1..hp6, armor1..armor6, offense1..offense6, defense1..defense6
+    # --- UnitRanksBox (per-rank stats as semicolon lists) ---
+    ranks_box = _find_template(wikicode, "unitranksbox")
     ranks: list[RankStats] = []
-    for r in range(1, MAX_RANKS + 1):
-        suffix = str(r)
 
-        hp = _int(params.get(f"hp{suffix}") or params.get(f"health{suffix}"))
-        armor = _int(params.get(f"armor{suffix}") or params.get(f"armour{suffix}"))
-        offense = _int(params.get(f"offense{suffix}") or params.get(f"off{suffix}"))
-        defense = _int(params.get(f"defense{suffix}") or params.get(f"def{suffix}"))
+    if ranks_box:
+        rp = _template_params(ranks_box)
+        logger.debug("UnitRanksBox params for %s: %s", page_title, list(rp.keys()))
 
-        # Collect any extra rank-specific keys
-        extra: dict[str, Any] = {}
-        for key, val in params.items():
-            if key.endswith(suffix) and key not in (
-                f"hp{suffix}", f"health{suffix}",
-                f"armor{suffix}", f"armour{suffix}",
-                f"offense{suffix}", f"off{suffix}",
-                f"defense{suffix}", f"def{suffix}",
-            ):
-                extra[key[: -len(suffix)]] = _str(val)
+        hp_vals      = _parse_semicolon_list(rp.get("hp"))
+        defense_vals = _parse_semicolon_list(rp.get("defense"))
+        bravery_vals = _parse_semicolon_list(rp.get("bravery"))
+        dodge_vals   = _parse_semicolon_list(rp.get("dodge"))
+        armor_vals   = _parse_semicolon_list(rp.get("armor") or rp.get("armour"))
+        offense_vals = _parse_semicolon_list(rp.get("offense"))
+        uv_vals      = _parse_semicolon_list(rp.get("uv"))
 
-        # Only include ranks that have at least one value on the wiki
-        if any(v is not None for v in (hp, armor, offense, defense)) or extra:
-            # Per-rank attacks (attack1name, attack1power, ...)
-            attacks = _parse_attacks_for_rank(params, r)
-            ranks.append(
-                RankStats(
-                    rank=r,
-                    hp=hp,
-                    armor=armor,
-                    offense=offense,
-                    defense=defense,
-                    attacks=attacks,
-                    extra=extra,
-                )
-            )
-
-    return UnitResponse(
-        name=name,
-        page_title=page_title,
-        unit_type=unit_type,
-        description=description,
-        ranks=ranks,
-        raw_template_params=params,
-    )
-
-
-def _parse_attacks_for_rank(params: dict[str, str], rank: int) -> list[AttackInfo]:
-    """
-    Look for attack entries keyed as attack{rank}name, attack{rank}power, etc.
-    Also handles a flat single-rank format: attackname, attackpower.
-    """
-    attacks: list[AttackInfo] = []
-    r = str(rank)
-
-    # Multi-attack pattern: attack1_1name, attack1_2name  OR  attack11name ...
-    # We look for any key matching attack{rank}*name
-    attack_name_keys = [
-        k for k in params
-        if re.match(rf"attack{r}[\d_]*name", k, re.I)
-    ]
-    if not attack_name_keys and rank == 1:
-        # Fallback: attackname (no rank suffix)
-        attack_name_keys = [k for k in params if re.match(r"attack\d*name", k, re.I)]
-
-    for name_key in attack_name_keys:
-        prefix = name_key[: name_key.lower().index("name")]
-        attacks.append(
-            AttackInfo(
-                name=_str(params[name_key]) or "Unknown",
-                power=_int(params.get(f"{prefix}power")),
-                offense=_int(params.get(f"{prefix}offense") or params.get(f"{prefix}off")),
-                damage_type=_str(params.get(f"{prefix}type") or params.get(f"{prefix}damagetype")),
-            )
+        num_ranks = max(
+            len(hp_vals), len(defense_vals), len(armor_vals),
+            len(offense_vals), len(bravery_vals), 0
         )
 
-    return attacks
+        def _get(lst, idx):
+            return lst[idx] if idx < len(lst) else None
+
+        for i in range(num_ranks):
+            extra = {}
+            bravery = _get(bravery_vals, i)
+            dodge = _get(dodge_vals, i)
+            uv = _get(uv_vals, i)
+            if bravery is not None:
+                extra["bravery"] = bravery
+            if dodge is not None:
+                extra["dodge"] = dodge
+            if uv is not None:
+                extra["unit_value"] = uv
+
+            ranks.append(RankStats(
+                rank=i + 1,
+                hp=_get(hp_vals, i),
+                armor=_get(armor_vals, i),
+                offense=_get(offense_vals, i),
+                defense=_get(defense_vals, i),
+                extra=extra,
+            ))
+
+    # --- AttackBox templates ---
+    attacks_by_rank = _parse_attack_boxes(wikicode)
+    for rank_stat in ranks:
+        rank_stat.attacks = attacks_by_rank.get(rank_stat.rank, [])
+
+    return UnitResponse(
+        name=page_title,
+        page_title=page_title,
+        unit_type=unit_type,
+        description=None,
+        ranks=ranks,
+        raw_template_params=profile_params,
+    )
+
+
+def _parse_attack_boxes(wikicode) -> dict:
+    """Parse all {{AttackBox}} templates. Returns {unlock_rank: [AttackInfo, ...]}"""
+    result: dict[int, list[AttackInfo]] = {}
+    for t in wikicode.filter_templates():
+        if str(t.name).strip().lower() != "attackbox":
+            continue
+        p = _template_params(t)
+        unlock_rank = _int(p.get("rank")) or 1
+        mindmg = _int(p.get("mindmg"))
+        maxdmg = _int(p.get("maxdmg"))
+        avg_power = None
+        if mindmg is not None and maxdmg is not None:
+            avg_power = (mindmg + maxdmg) // 2
+
+        extra = {}
+        for k, field in [("min_dmg", "mindmg"), ("max_dmg", "maxdmg"),
+                          ("crit", "basecrit"), ("range", "range"),
+                          ("ammo_used", "ammoused"), ("num_attacks", "numattacks"),
+                          ("targets", "targets")]:
+            v = p.get(field)
+            if v:
+                parsed = _int(v) if field not in ("range", "targets") else _str(v)
+                if parsed is not None:
+                    extra[k] = parsed
+
+        attack = AttackInfo(
+            name=_str(p.get("name")) or "Unknown",
+            power=avg_power,
+            offense=_int(p.get("baseoffense") or p.get("offense")),
+            damage_type=_str(p.get("damagetype") or p.get("damage_type")),
+            extra=extra,
+        )
+        result.setdefault(unlock_rank, []).append(attack)
+    return result
 
 
 # ---------------------------------------------------------------------------
 # Building parser
 # ---------------------------------------------------------------------------
 
-BUILDING_KEYWORDS = ["building", "structure", "infobox"]
-
-# Maps known resource-field names to human-readable labels
 RESOURCE_FIELD_ALIASES = {
-    "production": "production",
-    "produces": "production",
-    "resource": "resource",
-    "iron": "Iron",
-    "coal": "Coal",
-    "oil": "Oil",
-    "wood": "Wood",
-    "food": "Food",
-    "gold": "Gold",
-    "plasma": "Plasma",
-    "titanium": "Titanium",
-    "uranium": "Uranium",
+    "iron": "Iron", "coal": "Coal", "oil": "Oil", "wood": "Wood",
+    "food": "Food", "plasma": "Plasma", "titanium": "Titanium", "uranium": "Uranium",
 }
 
 
 def parse_building(wikitext: str, page_title: str) -> BuildingResponse:
     wikicode = mwparserfromhell.parse(wikitext)
-    infobox = _find_infobox(wikicode, BUILDING_KEYWORDS)
 
-    if infobox is None:
-        logger.warning("No building infobox found for %s", page_title)
-        return BuildingResponse(name=page_title, page_title=page_title)
+    # Try common building profile template names
+    profile = _find_template(wikicode, "buildingprofile", "building", "structure", "infobox")
+    profile_params = _template_params(profile) if profile else {}
 
-    params = _template_params(infobox)
-    logger.debug("Building params for %s: %s", page_title, list(params.keys()))
+    # Cost info from {{BuildCost}}
+    build_cost = _find_template(wikicode, "buildcost")
+    cost_params = _template_params(build_cost) if build_cost else {}
 
-    name = _str(params.get("name")) or page_title
-    building_type = _str(params.get("type") or params.get("buildingtype"))
-    description = _str(params.get("description") or params.get("desc"))
+    name = _str(profile_params.get("name")) or page_title
+    building_type = _str(profile_params.get("type") or profile_params.get("building type"))
+    description = _str(profile_params.get("description") or profile_params.get("desc"))
 
-    gold_cost = _int(params.get("gold") or params.get("cost") or params.get("goldcost"))
-    xp_reward = _int(params.get("xp") or params.get("experience") or params.get("xpreward"))
+    gold_cost = _int(cost_params.get("gold") or profile_params.get("gold"))
+    xp_reward = _int(cost_params.get("xp") or profile_params.get("xp"))
 
-    production = _parse_building_production(params)
+    production = _parse_building_production(profile_params, wikicode)
+
+    all_params = {**profile_params, **cost_params}
 
     return BuildingResponse(
         name=name,
@@ -238,44 +230,32 @@ def parse_building(wikitext: str, page_title: str) -> BuildingResponse:
         gold_cost=gold_cost,
         xp_reward=xp_reward,
         production=production,
-        raw_template_params=params,
+        raw_template_params=all_params,
     )
 
 
-def _parse_building_production(params: dict[str, str]) -> list[BuildingProduction]:
-    """
-    Handles several production field layouts:
-      production=Iron | amount=10 | time=3600
-      produces=Gold   | goldamount=500
-      iron=10 | irontime=3600
-    """
+def _parse_building_production(params: dict, wikicode) -> list[BuildingProduction]:
     production: list[BuildingProduction] = []
 
-    # Layout 1: production/produces + amount + time
-    resource_name = _str(
-        params.get("production") or params.get("produces") or params.get("resource")
-    )
+    # Layout 1: production/produces field
+    resource_name = _str(params.get("production") or params.get("produces") or params.get("resource"))
     if resource_name:
-        prod = BuildingProduction(
+        production.append(BuildingProduction(
             resource=resource_name,
             amount=_int(params.get("amount") or params.get("productionamount")),
-            period_seconds=_parse_time(
-                params.get("time") or params.get("productiontime") or params.get("cycle")
-            ),
-        )
-        production.append(prod)
+            period_seconds=_parse_time(params.get("time") or params.get("productiontime")),
+        ))
 
-    # Layout 2: per-resource keys  (iron=10, irontime=3600, etc.)
+    # Layout 2: per-resource keys (iron=10, irontime=3600)
     for field, label in RESOURCE_FIELD_ALIASES.items():
-        if field in ("production", "produces", "resource"):
-            continue
         if field in params:
             amount_val = _int(params.get(field))
-            time_val = _parse_time(params.get(f"{field}time") or params.get(f"{field}cycle"))
             if amount_val is not None:
-                production.append(
-                    BuildingProduction(resource=label, amount=amount_val, period_seconds=time_val)
-                )
+                production.append(BuildingProduction(
+                    resource=label,
+                    amount=amount_val,
+                    period_seconds=_parse_time(params.get(f"{field}time")),
+                ))
 
     return production
 
@@ -292,23 +272,15 @@ _TIME_PATTERNS = [
 
 
 def _parse_time(value: str | None) -> int | None:
-    """
-    Convert a human-readable time string to seconds.
-    Accepts: "1h", "30m", "3600s", "1h 30m", bare integers (treated as seconds).
-    """
     if value is None:
         return None
     value = str(value).strip()
-
-    # Bare integer → seconds
     if value.isdigit():
         return int(value)
-
     total = 0
     matched = False
     for pattern, multiplier in _TIME_PATTERNS:
         for m in re.finditer(pattern, value, re.I):
             total += int(m.group(1)) * multiplier
             matched = True
-
     return total if matched else None
