@@ -28,3 +28,4 @@ async def get_unit(page_title: str) -> UnitResponse:
             detail=f"Unit page '{page_title}' not found on the wiki.",
         )
     return unit
+6/6/2026
